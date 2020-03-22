@@ -26,10 +26,9 @@
 #include <linux/ipv6.h>
 #include <linux/icmpv6.h>
 
-// #include <linux/ip.h>
 #include <linux/icmp.h>
 
-// #include <linux/udp.h>
+#include <netinet/udp.h>      // struct udphdr
 #include <netinet/ip.h>
 
 #include <sys/types.h>
@@ -40,43 +39,21 @@
 
 
 /* --------merge header begin-------------- */
-
-
-// #include <stdio.h>
-// #include <stdlib.h>
-// #include <unistd.h>           // close()
-// #include <string.h>           // strcpy, memset(), and memcpy()
-
-#include <netdb.h>            // struct addrinfo
-// #include <sys/types.h>        // needed for socket(), uint8_t, uint16_t, uint32_t
-// #include <sys/socket.h>       // needed for socket()
-#include <netinet/in.h>       // IPPROTO_UDP, INET_ADDRSTRLEN
-// #include <netinet/ip.h>       // struct ip and IP_MAXPACKET (which is 65535)
-
-#include <netinet/udp.h>      // struct udphdr
-// #include <arpa/inet.h>        // inet_pton() and inet_ntop()
-#include <sys/ioctl.h>        // macro ioctl is defined
-#include <bits/ioctls.h>      // defines values for argument "request" of ioctl.
-// #include <net/if.h>           // struct ifreq
-// #include <linux/if_ether.h>   // ETH_P_IP = 0x0800, ETH_P_IPV6 = 0x86DD
-#include <linux/if_packet.h>  // struct sockaddr_ll (see man 7 packet)
-#include <net/ethernet.h>
-
-// #include <errno.h>            // errno, perror()
-
+ 
 // Define some constants.
 #define ETH_HDRLEN 14  // Ethernet header length
 #define IP4_HDRLEN 20  // IPv4 header length
 #define UDP_HDRLEN  8  // UDP header length, excludes data
 
 // Function prototypes
-uint16_t checksum (uint16_t *, int);
-uint16_t udp4_checksum (struct iphdr, struct udphdr, uint8_t *, int);
-char *allocate_strmem (int);
-uint8_t *allocate_ustrmem (int);
-int *allocate_intmem (int);
+unsigned short int ip_csum (unsigned short int *addr, int len);
 
-
+// uint16_t checksum (uint16_t *, int);
+// uint16_t udp4_checksum (struct iphdr, struct udphdr, uint8_t *, int);
+// char *allocate_strmem (int);
+// uint8_t *allocate_ustrmem (int);
+// int *allocate_intmem (int);
+ 
 /* --------merge header end-------------- */
 
 
@@ -375,23 +352,25 @@ typedef struct
     double socre;
 } My_UDP;
 
-int parse_test_body(struct hdr_cursor *nh)
+uint16_t parse_test_body(struct hdr_cursor *nh)
 {
 
-    // 接收结构体 
-    // My_UDP *my_content = (My_UDP *)(nh->pos);
-    // printf("\nmsg: %s", my_content->msg);
-    // printf("\nmsg2: %s", my_content->msg2);
-    // printf("\nnum: %d", (my_content->num));
-    // printf("\nnum: %f\n\n", (my_content->socre));
+    // receive struct
+/*
+    My_UDP *my_content = (My_UDP *)(nh->pos);
+    printf("\nmsg: %s", my_content->msg);
+    printf("\nmsg2: %s", my_content->msg2);
+    printf("\nnum: %d", (my_content->num));
+    printf("\nnum: %f\n\n", (my_content->socre));
+*/
 
-    //  接收字符串
+    //  receive string
 	char *buffer = (char *)(nh->pos);
 
-	printf("\nContent: %s\n\n", (buffer));
+	printf("\nContent: %s\n", (buffer));
 
 
-	return 0;
+	return strlen(buffer);
 }
 
 //  checksum
@@ -435,9 +414,9 @@ unsigned short in_cksum(unsigned short *addr, int len)
         *(u_char *) (&answer) = *(u_char *)w;
         sum += answer;
     }
-    sum = (sum >> 16) + (sum & 0xffff);//将高16bit与低16bit相加
+    sum = (sum >> 16) + (sum & 0xffff);
 
-    sum += (sum >> 16);//将进位到高位的16bit与低16bit 再相加
+    sum += (sum >> 16);
     answer = (unsigned short)(~sum);
     return (answer);
 }
@@ -455,7 +434,7 @@ struct pseudo_header
 
 
 static bool process_packet(struct xsk_socket_info *xsk,
-			   uint64_t addr, uint32_t len)
+			   uint64_t addr, uint32_t frame_len)
 {
 
 	int ip_type, proto_type;
@@ -474,7 +453,7 @@ static bool process_packet(struct xsk_socket_info *xsk,
  
 	struct ethhdr *eth = (struct ethhdr *) pkt;
 
-	// 获取从二层头获取三层协议名称
+	//  get layer 3 proto type from layer 2 header
 	// int eth_type = ntohs(eth->h_proto);
 
 
@@ -515,282 +494,64 @@ static bool process_packet(struct xsk_socket_info *xsk,
 			}
 			else
 			{
+
+
 				printf("\nIPv4 UDP dest port: %d\n", ntohs(udphdr->dest));
+ 
+				uint16_t receive_data_len = parse_test_body(&nh); 
 
-				parse_test_body(&nh);
+			    printf("\nReceive Data Len: %d\n", receive_data_len);
 
-				// uint8_t tmp_mac[ETH_ALEN];
-			    // struct in_addr tmp_ip;
-				// u_int16_t tmp_port = 0;
+				char* p1 = "hello-🍄-🎲-🍎--hhh";
 
-/*
-                //  mac 地址交换
+				uint16_t data_len = strlen(p1);
+
+				// iphdr->tot_len = htons(sizeof(struct iphdr) + sizeof(struct udphdr) + data_len);  // ok
+				iphdr->tot_len = htons (IP4_HDRLEN + UDP_HDRLEN + data_len);
+
+
+				// udphdr->len = htons(ntohs(udphdr->len) - receive_data_len + data_len);  // ok
+				// udphdr->len = htons(sizeof(struct udphdr) + data_len);  // ok
+				udphdr->len = htons (UDP_HDRLEN + data_len);
+
+				memcpy(nh.pos, p1, data_len); 
+
+				printf("\n-----ReceiveFrame: %d\n", frame_len);
+
+                // frame_len = frame_len - receive_data_len +  data_len;
+                // Ethernet frame length = ethernet header (MAC + MAC + ethernet type) + ethernet data (IP header + UDP header + UDP data)
+                // frame_len = 6 + 6 + 2 + IP4_HDRLEN + UDP_HDRLEN + data_len;
+				frame_len =  ETH_HDRLEN + IP4_HDRLEN + UDP_HDRLEN + data_len;
+
+				printf("\n-----SendFrameLen: %d\n", frame_len);
+
+
+				iphdr->check = 0;
+ 
+				iphdr->check = ip_csum((unsigned short int *)iphdr, (int)sizeof(struct iphdr));
+
+				udphdr->check = 0;
+
+
+				uint8_t tmp_mac[ETH_ALEN];
+			    struct in_addr tmp_ip;
+				u_int16_t tmp_port = 0;
+
+
+                //  mac switch
 				memcpy(tmp_mac, eth->h_dest, ETH_ALEN);
 			    memcpy(eth->h_dest, eth->h_source, ETH_ALEN);
 			    memcpy(eth->h_source, tmp_mac, ETH_ALEN);
 
-				//  IP 地址交换
+				//  IP switch
 			    memcpy(&tmp_ip, &iphdr->saddr, sizeof(tmp_ip));
 			    memcpy(&iphdr->saddr, &iphdr->daddr, sizeof(tmp_ip));
 			    memcpy(&iphdr->daddr, &tmp_ip, sizeof(tmp_ip));
 
-                //  端口 交换
+                //  port switch
 				memcpy(&tmp_port, &udphdr->source, sizeof(tmp_port));
 			    memcpy(&udphdr->source, &udphdr->dest, sizeof(tmp_port));
 			    memcpy(&udphdr->dest, &tmp_port, sizeof(tmp_port));
-*/
-
-                /*-------------------- self -------------------------*/
-/*
-				char datagram[10240], *data, *pseudogram;
-
-				memset(datagram, 0, 4096);
-
-                //  eth header
-				struct ethhdr *eth2 = (struct ethhdr *)datagram;
-
-				memcpy(eth2->h_dest, eth->h_source, ETH_ALEN);
-			    memcpy(eth2->h_source, eth->h_dest, ETH_ALEN);
-				// memcpy(eth2->h_proto, eth->h_proto,  2); // type length  = 2
-				eth2->h_proto = eth->h_proto;
-
-				//  IP header
-				struct iphdr *iph = (struct iphdr *)(datagram + sizeof(struct ethhdr));
-
-				//  UDP header
-				struct udphdr *udph = (struct udphdr *)(datagram + sizeof(struct ethhdr) + sizeof(struct ip));
-
-				struct sockaddr_in sin;
-				struct pseudo_header psh;
-
-				data = datagram + sizeof(struct ethhdr) + sizeof(struct iphdr) + sizeof(struct udphdr);
-
-				strcpy(data,  "jack");
-
-				// sin.sin_family = AF_INET;
-				// sin.sin_port = 
-
-			    //Fill in the IP Header
-			    iph->ihl = 5;
-			    iph->version = 4;
-			    iph->tos = 0;
-
-				iph->tot_len = sizeof(struct iphdr) + sizeof(struct udphdr) + 5; // jack\0
-				iph->id = htonl(54321);
-				iph->frag_off = 0;
-  				iph->ttl = 255;
-				iph->protocol = IPPROTO_UDP;
-				iph->check = 0;
-
-				memcpy(&iph->saddr, &iphdr->daddr, sizeof(tmp_ip));
-			    memcpy(&iph->daddr, &iphdr->saddr, sizeof(tmp_ip));
-
-				//Ip checksum
-				iph->check = csum((unsigned short *)(datagram + sizeof(struct ethhdr)), iph->tot_len);
-
-				memcpy(&udph->source, &udphdr->source, sizeof(tmp_port));
-			    memcpy(&udph->dest, &udphdr->dest, sizeof(tmp_port));
-
-				udph->len = htons(sizeof(struct udphdr) + 5); // jack\0
-
-				udph->check = 0;  
-
-				//Now the UDP checksum using the pseudo header
-				psh.source_address = inet_addr("10.11.1.1");
-				psh.dest_address = inet_addr("10.11.1.2");
-				psh.placeholder = 0;
-				psh.protocol = IPPROTO_UDP;
-				// psh.udp_length = htons(sizeof(struct udphdr) + strlen(data));
-				psh.udp_length = htons(sizeof(struct udphdr) + 5); // jack\0
-
-				int psize = sizeof(struct pseudo_header) + sizeof(struct udphdr) + 5; // jack\0
-
-				pseudogram = malloc(psize);
-
-				memcpy(pseudogram, (char *)&psh, sizeof(struct pseudo_header));
-
-				memcpy(pseudogram + sizeof(struct pseudo_header), udph, sizeof(struct udphdr) + 5); // jack\0
-
-				udph->check = csum((unsigned short *)pseudogram, psize);
-*/
-
-  int i, status, datalen, frame_length, sd, *ip_flags; // bytes, 
-  char *interface, *target, *src_ip, *dst_ip;
-  struct iphdr iphdr_assemble;
-  struct udphdr udphdr_assemble;
-  uint8_t *data, *src_mac, *dst_mac, *ether_frame;
-  struct addrinfo hints, *res;
-  struct sockaddr_in *ipv4;
-  struct sockaddr_ll device;
-  struct ifreq ifr;
-  void *tmp;
-
-  // Allocate memory for various arrays.
-  src_mac = allocate_ustrmem (6);
-  dst_mac = allocate_ustrmem (6);
-  data = allocate_ustrmem (IP_MAXPACKET);
-  ether_frame = allocate_ustrmem (IP_MAXPACKET);
-  interface = allocate_strmem (40);
-  target = allocate_strmem (40);
-  src_ip = allocate_strmem (INET_ADDRSTRLEN);
-  dst_ip = allocate_strmem (INET_ADDRSTRLEN);
-  ip_flags = allocate_intmem (4);
-
-  // Set destination MAC address: you need to fill these out
-  //  ea:95:c9:55:60:64
-  //   veth-adv03       
-  src_mac[0] = 0xea;
-  src_mac[1] = 0x95;
-  src_mac[2] = 0xc9;
-  src_mac[3] = 0x55;
-  src_mac[4] = 0x60;
-  src_mac[5] = 0x64;
-
-  // veth0  aa:31:36:f1:7e:06
-  dst_mac[0] = 0xaa;
-  dst_mac[1] = 0x31;
-  dst_mac[2] = 0x36;
-  dst_mac[3] = 0xf1;
-  dst_mac[4] = 0x7e;
-  dst_mac[5] = 0x09;
-
-  // Source IPv4 address: you need to fill this out
-  strcpy (src_ip, "10.11.1.1"); 
-  // strcpy (src_ip, "10.0.2.15"); 
-
-  // Destination URL or IPv4 address: you need to fill this out
-  strcpy (target, "10.11.1.2");
-  // strcpy (target, "60.205.190.117");
-
-  // Fill out hints for getaddrinfo().
-  memset (&hints, 0, sizeof (struct addrinfo));
-  hints.ai_family = AF_INET;
-  hints.ai_socktype = SOCK_STREAM;
-  hints.ai_flags = hints.ai_flags | AI_CANONNAME;
-
-  // Resolve target using getaddrinfo().
-  if ((status = getaddrinfo (target, NULL, &hints, &res)) != 0) {
-    fprintf (stderr, "getaddrinfo() failed: %s\n", gai_strerror (status));
-    exit (EXIT_FAILURE);
-  }
-  ipv4 = (struct sockaddr_in *) res->ai_addr;
-  tmp = &(ipv4->sin_addr);
-  if (inet_ntop (AF_INET, tmp, dst_ip, INET_ADDRSTRLEN) == NULL) {
-    status = errno;
-    fprintf (stderr, "inet_ntop() failed.\nError message: %s", strerror (status));
-    exit (EXIT_FAILURE);
-  }
-  freeaddrinfo (res);
-
-  // Fill out sockaddr_ll.
-  device.sll_family = AF_PACKET;
-  memcpy (device.sll_addr, src_mac, 6 * sizeof (uint8_t));
-  device.sll_halen = 6;
-
-  // UDP data
-  strcpy(data, "hello-hhhh--+");
-
-  datalen = (int)strlen(data);
-
-  printf("\n🏀 -----datalen: %d\n\n", datalen);
-
-  // IPv4 header
-
-  // IPv4 header length (4 bits): Number of 32-bit words in header = 5
-  iphdr_assemble.ihl = IP4_HDRLEN / sizeof (uint32_t);
-
-  // Internet Protocol version (4 bits): IPv4
-  iphdr_assemble.version = 4;
-
-  // Type of service (8 bits)
-  iphdr_assemble.tos = 0;
-
-  // Total length of datagram (16 bits): IP header + UDP header + datalen
-  iphdr_assemble.tot_len = htons (IP4_HDRLEN + UDP_HDRLEN + datalen);
-
-  // ID sequence number (16 bits): unused, since single datagram
-  iphdr_assemble.id = htons (0);
-
-  // Flags, and Fragmentation offset (3, 13 bits): 0 since single datagram
-
-  // Zero (1 bit)
-  ip_flags[0] = 0;
-
-  // Do not fragment flag (1 bit)
-  ip_flags[1] = 0;
-
-  // More fragments following flag (1 bit)
-  ip_flags[2] = 0;
-
-  // Fragmentation offset (13 bits)
-  ip_flags[3] = 0;
-
-  iphdr_assemble.frag_off = htons ((ip_flags[0] << 15)
-                      + (ip_flags[1] << 14)
-                      + (ip_flags[2] << 13)
-                      +  ip_flags[3]);
-
-  // Time-to-Live (8 bits): default to maximum value
-  iphdr_assemble.ttl = 255;
-
-  // Transport layer protocol (8 bits): 17 for UDP
-  iphdr_assemble.protocol = IPPROTO_UDP;
-
-  // Source IPv4 address (32 bits)
-  if ((status = inet_pton (AF_INET, src_ip, &(iphdr_assemble.saddr))) != 1) {
-    fprintf (stderr, "inet_pton() failed.\nError message: %s", strerror (status));
-    exit (EXIT_FAILURE);
-  }
-
-  // Destination IPv4 address (32 bits)
-  if ((status = inet_pton (AF_INET, dst_ip, &(iphdr_assemble.daddr))) != 1) {
-    fprintf (stderr, "inet_pton() failed.\nError message: %s", strerror (status));
-    exit (EXIT_FAILURE);
-  }
-
-  // IPv4 header checksum (16 bits): set to 0 when calculating checksum
-  iphdr_assemble.check = 0;
-  iphdr_assemble.check = checksum ((uint16_t *) &iphdr_assemble, IP4_HDRLEN);
-
-  // UDP header
-
-  // Source port number (16 bits): pick a number
-  udphdr_assemble.source = htons (8080);
-
-  // Destination port number (16 bits): pick a number
-  udphdr_assemble.dest = htons (10000);
-
-  // Length of UDP datagram (16 bits): UDP header + UDP data
-  udphdr_assemble.len = htons (UDP_HDRLEN + datalen);
-
-  // UDP checksum (16 bits)
-  udphdr_assemble.check = udp4_checksum (iphdr_assemble, udphdr_assemble, data, datalen);
-
-  // Fill out ethernet frame header.
-
-  // Ethernet frame length = ethernet header (MAC + MAC + ethernet type) + ethernet data (IP header + UDP header + UDP data)
-  frame_length = 6 + 6 + 2 + IP4_HDRLEN + UDP_HDRLEN + datalen;
-
-  // Destination and Source MAC addresses
-  memcpy (ether_frame, dst_mac, 6 * sizeof (uint8_t));
-  memcpy (ether_frame + 6, src_mac, 6 * sizeof (uint8_t));
-
-  // Next is ethernet type code (ETH_P_IP for IPv4).
-  // http://www.iana.org/assignments/ethernet-numbers
-  ether_frame[12] = ETH_P_IP / 256;
-  ether_frame[13] = ETH_P_IP % 256;
-
-  // Next is ethernet frame data (IPv4 header + UDP header + UDP data).
-
-  // IPv4 header
-  memcpy (ether_frame + ETH_HDRLEN, &iphdr_assemble, IP4_HDRLEN * sizeof (uint8_t));
-
-  // UDP header
-  memcpy (ether_frame + ETH_HDRLEN + IP4_HDRLEN, &udphdr_assemble, UDP_HDRLEN * sizeof (uint8_t));
-
-  // UDP data
-  memcpy (ether_frame + ETH_HDRLEN + IP4_HDRLEN + UDP_HDRLEN, data, datalen * sizeof (uint8_t));
-
 
 				uint32_t tx_idx = 0;
 
@@ -800,30 +561,15 @@ static bool process_packet(struct xsk_socket_info *xsk,
 				    return false;
 			    }
 
-			    xsk_ring_prod__tx_desc(&xsk->tx, tx_idx)->addr = (uint64_t)(ether_frame); // &ether_frame (uint64_t)
-			    xsk_ring_prod__tx_desc(&xsk->tx, tx_idx)->len = frame_length;
+			    xsk_ring_prod__tx_desc(&xsk->tx, tx_idx)->addr = addr; // &ether_frame (uint64_t)
+			    xsk_ring_prod__tx_desc(&xsk->tx, tx_idx)->len = frame_len;
 			    xsk_ring_prod__submit(&xsk->tx, 1);
 			    xsk->outstanding_tx++;
 
-			    xsk->stats.tx_bytes += frame_length;
+			    xsk->stats.tx_bytes += frame_len;
 			    xsk->stats.tx_packets++;
 
-				complete_tx(xsk);
-
-
-  // Free allocated memory.
-
-  free (src_mac);
-  free (dst_mac);
-  free (data);
-  free (ether_frame);
-  free (interface);
-  free (target);
-  free (src_ip);
-  free (dst_ip);
-  free (ip_flags);
-
-			    return true;
+				return true;
 
 			}
 
@@ -843,7 +589,7 @@ static bool process_packet(struct xsk_socket_info *xsk,
 		// struct iphdr *ipv4hdr = (struct iphdr *) (eth + 1);
         // int hdrsize;
 		// hdrsize = ipv4hdr->ihl * 4;
-		// todo 检查三层 头部边界
+		// todo check layer 3 header boundary
 
     // iph->check = csum((unsigned short *)datagram, iph->tot_len);
 
@@ -858,7 +604,7 @@ static bool process_packet(struct xsk_socket_info *xsk,
 			struct iphdr *ipv4 = (struct iphdr *) (eth + 1);
 			struct icmphdr *icmp = (struct icmphdr *) (ipv4 + 1);
 
-			if (len < (sizeof(*eth) + sizeof(*ipv4) + sizeof(*icmp)) ||
+			if (frame_len < (sizeof(*eth) + sizeof(*ipv4) + sizeof(*icmp)) ||
 			    ipv4->protocol != IPPROTO_ICMP ||
 			    icmp->type != ICMP_ECHO)
 				return false;
@@ -878,7 +624,7 @@ static bool process_packet(struct xsk_socket_info *xsk,
 			// 	      htons(ICMP_ECHOREPLY << 8));
 
 			icmp->checksum = 0;
-			icmp->checksum = csum((unsigned short *)icmp, len - sizeof (struct iphdr));
+			icmp->checksum = csum((unsigned short *)icmp, frame_len - sizeof (struct iphdr));
 
 
 			ret = xsk_ring_prod__reserve(&xsk->tx, 1, &tx_idx);
@@ -888,11 +634,11 @@ static bool process_packet(struct xsk_socket_info *xsk,
 			}
 
 			xsk_ring_prod__tx_desc(&xsk->tx, tx_idx)->addr = addr;
-			xsk_ring_prod__tx_desc(&xsk->tx, tx_idx)->len = len;
+			xsk_ring_prod__tx_desc(&xsk->tx, tx_idx)->len = frame_len;
 			xsk_ring_prod__submit(&xsk->tx, 1);
 			xsk->outstanding_tx++;
 
-			xsk->stats.tx_bytes += len;
+			xsk->stats.tx_bytes += frame_len;
 			xsk->stats.tx_packets++;
 			return true;
 
@@ -920,7 +666,7 @@ static bool process_packet(struct xsk_socket_info *xsk,
 		struct icmp6hdr *icmp = (struct icmp6hdr *) (ipv6 + 1);
 
 		if (ntohs(eth->h_proto) != ETH_P_IPV6 ||
-		    len < (sizeof(*eth) + sizeof(*ipv6) + sizeof(*icmp)) ||
+		    frame_len < (sizeof(*eth) + sizeof(*ipv6) + sizeof(*icmp)) ||
 		    ipv6->nexthdr != IPPROTO_ICMPV6 ||
 		    icmp->icmp6_type != ICMPV6_ECHO_REQUEST)
 			return false;
@@ -950,11 +696,11 @@ static bool process_packet(struct xsk_socket_info *xsk,
 		}
 
 		xsk_ring_prod__tx_desc(&xsk->tx, tx_idx)->addr = addr;
-		xsk_ring_prod__tx_desc(&xsk->tx, tx_idx)->len = len;
+		xsk_ring_prod__tx_desc(&xsk->tx, tx_idx)->len = frame_len;
 		xsk_ring_prod__submit(&xsk->tx, 1);
 		xsk->outstanding_tx++;
 
-		xsk->stats.tx_bytes += len;
+		xsk->stats.tx_bytes += frame_len;
 		xsk->stats.tx_packets++;
 		return true;
 	}
@@ -1008,7 +754,7 @@ static void handle_receive_packets(struct xsk_socket_info *xsk)
 	xsk->stats.rx_packets += rcvd;
 
 	/* Do we need to wake up the kernel for transmission */
-	// complete_tx(xsk);
+	complete_tx(xsk);
   }
 
 static void rx_and_process(struct config *cfg,
@@ -1248,172 +994,196 @@ int main(int argc, char **argv)
 
 
 /* ------------------------------------ */ 
-
-// Computing the internet checksum (RFC 1071).
-// Note that the internet checksum does not preclude collisions.
-uint16_t
-checksum (uint16_t *addr, int len)
+//caculate ip checksum
+unsigned short int ip_csum (unsigned short int *addr, int len)
 {
-  int count = len;
-  register uint32_t sum = 0;
-  uint16_t answer = 0;
-
-  // Sum up 2-byte values until none or only one byte left.
-  while (count > 1) {
-    sum += *(addr++);
-    count -= 2;
-  }
-
-  // Add left-over byte, if any.
-  if (count > 0) {
-    sum += *(uint8_t *) addr;
-  }
-
-  // Fold 32-bit sum into 16 bits; we lose information by doing this,
-  // increasing the chances of a collision.
-  // sum = (lower 16 bits) + (upper 16 bits shifted right 16 bits)
-  while (sum >> 16) {
-    sum = (sum & 0xffff) + (sum >> 16);
-  }
-
-  // Checksum is one's compliment of sum.
-  answer = ~sum;
-
-  return (answer);
+	int nleft = len;
+        int sum = 0;
+        unsigned short int *w = addr;
+	unsigned short int answer = 0; 
+        while (nleft > 1) 
+	{
+		sum += *w++;
+		nleft -= sizeof (unsigned short int);
+	}
+		 
+	if (nleft == 1) 
+	{
+	 	*(char *) (&answer) = *(char *) w;
+		sum += answer;
+	}
+	
+	sum = (sum >> 16) + (sum & 0xFFFF);
+	sum += (sum >> 16);
+	answer = ~sum;
+	return (answer);
 }
 
-// Build IPv4 UDP pseudo-header and call checksum function.
-uint16_t
-udp4_checksum (struct iphdr iphdr_assemble, struct udphdr udphdr, uint8_t *payload, int payloadlen)
-{
-  char buf[IP_MAXPACKET];
-  char *ptr;
-  int chksumlen = 0;
-  int i;
+// // Computing the internet checksum (RFC 1071).
+// // Note that the internet checksum does not preclude collisions.
+// uint16_t
+// checksum (uint16_t *addr, int len)
+// {
+//   int count = len;
+//   register uint32_t sum = 0;
+//   uint16_t answer = 0;
 
-  ptr = &buf[0];  // ptr points to beginning of buffer buf
+//   // Sum up 2-byte values until none or only one byte left.
+//   while (count > 1) {
+//     sum += *(addr++);
+//     count -= 2;
+//   }
 
-  // Copy source IP address into buf (32 bits)
-  memcpy (ptr, &iphdr_assemble.saddr, sizeof (iphdr_assemble.saddr));
-  ptr += sizeof (iphdr_assemble.saddr);
-  chksumlen += sizeof (iphdr_assemble.saddr);
+//   // Add left-over byte, if any.
+//   if (count > 0) {
+//     sum += *(uint8_t *) addr;
+//   }
 
-  // Copy destination IP address into buf (32 bits)
-  memcpy (ptr, &iphdr_assemble.daddr, sizeof (iphdr_assemble.daddr));
-  ptr += sizeof (iphdr_assemble.daddr);
-  chksumlen += sizeof (iphdr_assemble.saddr);
+//   // Fold 32-bit sum into 16 bits; we lose information by doing this,
+//   // increasing the chances of a collision.
+//   // sum = (lower 16 bits) + (upper 16 bits shifted right 16 bits)
+//   while (sum >> 16) {
+//     sum = (sum & 0xffff) + (sum >> 16);
+//   }
 
-  // Copy zero field to buf (8 bits)
-  *ptr = 0; ptr++;
-  chksumlen += 1;
+//   // Checksum is one's compliment of sum.
+//   answer = ~sum;
 
-  // Copy transport layer protocol to buf (8 bits)
-  memcpy (ptr, &iphdr_assemble.protocol, sizeof (iphdr_assemble.protocol));
-  ptr += sizeof (iphdr_assemble.protocol);
-  chksumlen += sizeof (iphdr_assemble.protocol);
+//   return (answer);
+// }
 
-  // Copy UDP length to buf (16 bits)
-  memcpy (ptr, &udphdr.len, sizeof (udphdr.len));
-  ptr += sizeof (udphdr.len);
-  chksumlen += sizeof (udphdr.len);
+// // Build IPv4 UDP pseudo-header and call checksum function.
+// uint16_t
+// udp4_checksum (struct iphdr iphdr_assemble, struct udphdr udphdr, uint8_t *payload, int payloadlen)
+// {
+//   char buf[IP_MAXPACKET];
+//   char *ptr;
+//   int chksumlen = 0;
+//   int i;
 
-  // Copy UDP source port to buf (16 bits)
-  memcpy (ptr, &udphdr.source, sizeof (udphdr.source));
-  ptr += sizeof (udphdr.source);
-  chksumlen += sizeof (udphdr.source);
+//   ptr = &buf[0];  // ptr points to beginning of buffer buf
 
-  // Copy UDP destination port to buf (16 bits)
-  memcpy (ptr, &udphdr.dest, sizeof (udphdr.dest));
-  ptr += sizeof (udphdr.dest);
-  chksumlen += sizeof (udphdr.dest);
+//   // Copy source IP address into buf (32 bits)
+//   memcpy (ptr, &iphdr_assemble.saddr, sizeof (iphdr_assemble.saddr));
+//   ptr += sizeof (iphdr_assemble.saddr);
+//   chksumlen += sizeof (iphdr_assemble.saddr);
 
-  // Copy UDP length again to buf (16 bits)
-  memcpy (ptr, &udphdr.len, sizeof (udphdr.len));
-  ptr += sizeof (udphdr.len);
-  chksumlen += sizeof (udphdr.len);
+//   // Copy destination IP address into buf (32 bits)
+//   memcpy (ptr, &iphdr_assemble.daddr, sizeof (iphdr_assemble.daddr));
+//   ptr += sizeof (iphdr_assemble.daddr);
+//   chksumlen += sizeof (iphdr_assemble.saddr);
 
-  // Copy UDP checksum to buf (16 bits)
-  // Zero, since we don't know it yet
-  *ptr = 0; ptr++;
-  *ptr = 0; ptr++;
-  chksumlen += 2;
+//   // Copy zero field to buf (8 bits)
+//   *ptr = 0; ptr++;
+//   chksumlen += 1;
 
-  // Copy payload to buf
-  memcpy (ptr, payload, payloadlen);
-  ptr += payloadlen;
-  chksumlen += payloadlen;
+//   // Copy transport layer protocol to buf (8 bits)
+//   memcpy (ptr, &iphdr_assemble.protocol, sizeof (iphdr_assemble.protocol));
+//   ptr += sizeof (iphdr_assemble.protocol);
+//   chksumlen += sizeof (iphdr_assemble.protocol);
 
-  // Pad to the next 16-bit boundary
-  for (i=0; i<payloadlen%2; i++, ptr++) {
-    *ptr = 0;
-    ptr++;
-    chksumlen++;
-  }
+//   // Copy UDP length to buf (16 bits)
+//   memcpy (ptr, &udphdr.len, sizeof (udphdr.len));
+//   ptr += sizeof (udphdr.len);
+//   chksumlen += sizeof (udphdr.len);
 
-  return checksum ((uint16_t *) buf, chksumlen);
-}
+//   // Copy UDP source port to buf (16 bits)
+//   memcpy (ptr, &udphdr.source, sizeof (udphdr.source));
+//   ptr += sizeof (udphdr.source);
+//   chksumlen += sizeof (udphdr.source);
 
-// Allocate memory for an array of chars.
-char *
-allocate_strmem (int len)
-{
-  void *tmp;
+//   // Copy UDP destination port to buf (16 bits)
+//   memcpy (ptr, &udphdr.dest, sizeof (udphdr.dest));
+//   ptr += sizeof (udphdr.dest);
+//   chksumlen += sizeof (udphdr.dest);
 
-  if (len <= 0) {
-    fprintf (stderr, "ERROR: Cannot allocate memory because len = %i in allocate_strmem().\n", len);
-    exit (EXIT_FAILURE);
-  }
+//   // Copy UDP length again to buf (16 bits)
+//   memcpy (ptr, &udphdr.len, sizeof (udphdr.len));
+//   ptr += sizeof (udphdr.len);
+//   chksumlen += sizeof (udphdr.len);
 
-  tmp = (char *) malloc (len * sizeof (char));
-  if (tmp != NULL) {
-    memset (tmp, 0, len * sizeof (char));
-    return (tmp);
-  } else {
-    fprintf (stderr, "ERROR: Cannot allocate memory for array allocate_strmem().\n");
-    exit (EXIT_FAILURE);
-  }
-}
+//   // Copy UDP checksum to buf (16 bits)
+//   // Zero, since we don't know it yet
+//   *ptr = 0; ptr++;
+//   *ptr = 0; ptr++;
+//   chksumlen += 2;
 
-// Allocate memory for an array of unsigned chars.
-uint8_t *
-allocate_ustrmem (int len)
-{
-  void *tmp;
+//   // Copy payload to buf
+//   memcpy (ptr, payload, payloadlen);
+//   ptr += payloadlen;
+//   chksumlen += payloadlen;
 
-  if (len <= 0) {
-    fprintf (stderr, "ERROR: Cannot allocate memory because len = %i in allocate_ustrmem().\n", len);
-    exit (EXIT_FAILURE);
-  }
+//   // Pad to the next 16-bit boundary
+//   for (i=0; i<payloadlen%2; i++, ptr++) {
+//     *ptr = 0;
+//     ptr++;
+//     chksumlen++;
+//   }
 
-  tmp = (uint8_t *) malloc (len * sizeof (uint8_t));
-  if (tmp != NULL) {
-    memset (tmp, 0, len * sizeof (uint8_t));
-    return (tmp);
-  } else {
-    fprintf (stderr, "ERROR: Cannot allocate memory for array allocate_ustrmem().\n");
-    exit (EXIT_FAILURE);
-  }
-}
+//   return checksum ((uint16_t *) buf, chksumlen);
+// }
 
-// Allocate memory for an array of ints.
-int *
-allocate_intmem (int len)
-{
-  void *tmp;
+// // Allocate memory for an array of chars.
+// char *
+// allocate_strmem (int len)
+// {
+//   void *tmp;
 
-  if (len <= 0) {
-    fprintf (stderr, "ERROR: Cannot allocate memory because len = %i in allocate_intmem().\n", len);
-    exit (EXIT_FAILURE);
-  }
+//   if (len <= 0) {
+//     fprintf (stderr, "ERROR: Cannot allocate memory because len = %i in allocate_strmem().\n", len);
+//     exit (EXIT_FAILURE);
+//   }
 
-  tmp = (int *) malloc (len * sizeof (int));
-  if (tmp != NULL) {
-    memset (tmp, 0, len * sizeof (int));
-    return (tmp);
-  } else {
-    fprintf (stderr, "ERROR: Cannot allocate memory for array allocate_intmem().\n");
-    exit (EXIT_FAILURE);
-  }
-}
+//   tmp = (char *) malloc (len * sizeof (char));
+//   if (tmp != NULL) {
+//     memset (tmp, 0, len * sizeof (char));
+//     return (tmp);
+//   } else {
+//     fprintf (stderr, "ERROR: Cannot allocate memory for array allocate_strmem().\n");
+//     exit (EXIT_FAILURE);
+//   }
+// }
+
+// // Allocate memory for an array of unsigned chars.
+// uint8_t *
+// allocate_ustrmem (int len)
+// {
+//   void *tmp;
+
+//   if (len <= 0) {
+//     fprintf (stderr, "ERROR: Cannot allocate memory because len = %i in allocate_ustrmem().\n", len);
+//     exit (EXIT_FAILURE);
+//   }
+
+//   tmp = (uint8_t *) malloc (len * sizeof (uint8_t));
+//   if (tmp != NULL) {
+//     memset (tmp, 0, len * sizeof (uint8_t));
+//     return (tmp);
+//   } else {
+//     fprintf (stderr, "ERROR: Cannot allocate memory for array allocate_ustrmem().\n");
+//     exit (EXIT_FAILURE);
+//   }
+// }
+
+// // Allocate memory for an array of ints.
+// int *
+// allocate_intmem (int len)
+// {
+//   void *tmp;
+
+//   if (len <= 0) {
+//     fprintf (stderr, "ERROR: Cannot allocate memory because len = %i in allocate_intmem().\n", len);
+//     exit (EXIT_FAILURE);
+//   }
+
+//   tmp = (int *) malloc (len * sizeof (int));
+//   if (tmp != NULL) {
+//     memset (tmp, 0, len * sizeof (int));
+//     return (tmp);
+//   } else {
+//     fprintf (stderr, "ERROR: Cannot allocate memory for array allocate_intmem().\n");
+//     exit (EXIT_FAILURE);
+//   }
+// }
 
 /* ------------------------------------ */ 
